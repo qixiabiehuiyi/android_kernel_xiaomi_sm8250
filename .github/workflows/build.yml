@@ -6,7 +6,7 @@ on:
       device:
         description: 'Target Device Code (设备代号)'
         required: true
-        default: 'lmi'
+        default: 'pipa'
         type: choice
         options:
           - alioth
@@ -26,22 +26,32 @@ on:
         description: 'Enable KernelSU (ReSukiSU)'
         required: true
         type: boolean
-        default: false
+        default: true
       target_os:
         description: 'Target OS (目标系统)'
         required: true
         type: choice
-        default: 'both'
+        default: 'miui'
         options:
           - aosp
           - miui
           - both
+      droidspaces:
+        description: 'Enable Droidspaces (容器支持)'
+        required: true
+        type: boolean
+        default: true
+      kernel_name:
+        description: 'Kernel name suffix (内核显示名后缀)'
+        required: true
+        type: string
+        default: 'pipa-ds'
 
 jobs:
   build-kernel:
-    name: Build ${{ github.event.inputs.device }} | KSU:${{ github.event.inputs.ksu }} | OS:${{ github.event.inputs.target_os }}
+    name: Build ${{ github.event.inputs.device }} | KSU:${{ github.event.inputs.ksu }} | OS:${{ github.event.inputs.target_os }} | DS:${{ github.event.inputs.droidspaces }}
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v7
@@ -55,8 +65,8 @@ jobs:
           git gnupg gperf imagemagick libncurses-dev \
           lib32readline-dev lib32z1-dev liblz4-tool \
           libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
-          schedtool squashfs-tools xsltproc zip zlib1g-dev python3
-          
+          schedtool squashfs-tools xsltproc zip zlib1g-dev python3 coccinelle
+
     - name: Cache ccache
       uses: actions/cache@v6
       with:
@@ -70,29 +80,79 @@ jobs:
       run: |
         mkdir -p $HOME/zyc-clang
         cd $HOME/zyc-clang
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
-        tar -zxvf Clang-16.0.6-20260807.tar.gz
+        wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260510-release/Clang-16.0.6-20260510.tar.gz
+        tar -zxvf Clang-16.0.6-20260510.tar.gz
+
+    - name: Patch Droidspaces
+      if: ${{ github.event.inputs.droidspaces == 'true' }}
+      run: |
+        set -e
+        DEFCONFIG="arch/arm64/configs/${{ github.event.inputs.device }}_defconfig"
+        echo "[*] Appending droidspaces config to $DEFCONFIG"
+        cat Patches/Droidspaces/droidspaces.config >> "$DEFCONFIG"
+
+        if [ -f net/netfilter/xt_qtaguid.c ]; then
+          echo "[*] Patching xt_qtaguid.c"
+          spatch --sp-file Patches/Droidspaces/fix_kernel_panic_in_xt_qtaguid.cocci --in-place net/netfilter/xt_qtaguid.c
+        else
+          echo "[-] xt_qtaguid.c not found, skipped"
+        fi
+
+        if [ -f kernel/cgroup/cgroup.c ] && ! grep -q kernfs_create_link kernel/cgroup/cgroup.c; then
+          echo "[*] Patching kernel/cgroup/cgroup.c"
+          spatch --sp-file Patches/Droidspaces/fix_restore_cgroup_file_prefix_handling.cocci --in-place kernel/cgroup/cgroup.c
+        elif [ -f kernel/cgroup.c ] && ! grep -q kernfs_create_link kernel/cgroup.c; then
+          echo "[*] Patching kernel/cgroup.c"
+          spatch --sp-file Patches/Droidspaces/fix_restore_cgroup_file_prefix_handling.cocci --in-place kernel/cgroup.c
+        else
+          echo "[-] cgroup already patched or not found, skipped"
+        fi
+        echo "[+] Droidspaces patch done"
+
+    - name: Pin KernelSU Version
+      if: ${{ github.event.inputs.ksu == 'true' }}
+      run: |
+        set -e
+        echo "[*] Original KernelSU setup line:"
+        grep -n 'setup.sh' build_kernel.sh || true
+        # 钉住 KernelSU 版本：上游 main 的 susfs_compat.mk 会因为内核 SuSFS 补丁较旧而
+        # 直接 $(error Please wait susfs update.)，必须用与内核配套的旧版本
+        sed -i 's#kernel/setup\.sh" | bash#kernel/setup.sh" | bash -s v4.2.0-rc1#' build_kernel.sh
+        echo "[*] Patched KernelSU setup line:"
+        grep -n 'setup.sh' build_kernel.sh
+
+    - name: Set Kernel Name
+      run: |
+        set -e
+        DEFCONFIG="arch/arm64/configs/${{ github.event.inputs.device }}_defconfig"
+        NAME="${{ github.event.inputs.kernel_name }}"
+        if [ -n "$NAME" ]; then
+          echo "[*] Setting CONFIG_LOCALVERSION to -$NAME"
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-$NAME\"|" "$DEFCONFIG"
+        fi
+        echo "[*] Current LOCALVERSION lines:"
+        grep -n '^CONFIG_LOCALVERSION' "$DEFCONFIG" || true
 
     - name: Run Build Script
       run: |
         chmod +x build_kernel.sh
-        
+
         ARGS="${{ github.event.inputs.device }}"
-        
+
         if [ "${{ github.event.inputs.ksu }}" == "true" ]; then
           ARGS="$ARGS ksu"
         fi
-        
+
         if [ "${{ github.event.inputs.target_os }}" != "both" ]; then
           ARGS="$ARGS ${{ github.event.inputs.target_os }}"
         fi
-        
+
         echo "Executing command: ./build_kernel.sh $ARGS"
         ./build_kernel.sh $ARGS
 
     - name: Upload Flashable ZIP
       uses: actions/upload-artifact@v7
       with:
-        name: APTKernel-${{ github.event.inputs.device }}-${{ github.event.inputs.target_os }}-${{ github.run_id }}
+        name: APTKernel-${{ github.event.inputs.device }}-${{ github.event.inputs.target_os }}-DS${{ github.event.inputs.droidspaces }}-${{ github.run_id }}
         path: APTKernel_*.zip
-        compression-level: 0 # 已经被 zip 压缩过，无需再二次压缩
+        compression-level: 0
