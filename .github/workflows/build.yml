@@ -88,7 +88,6 @@ jobs:
       run: |
         set -e
         mkdir -p Patches/Droidspaces
-
         cat > Patches/Droidspaces/droidspaces.config <<'DS_CONFIG_EOF'
         # Kernel configurations for full DroidSpaces support
         # Copyright (C) 2026 ravindu644 <droidcasts@protonmail.com>
@@ -213,7 +212,7 @@ jobs:
         CONFIG_NETFILTER_NETLINK_QUEUE=y
         CONFIG_NETFILTER_NETLINK_LOG=y
         CONFIG_NETFILTER_XT_TARGET_NFLOG=y
-DS_CONFIG_EOF
+        DS_CONFIG_EOF
 
         cat > Patches/Droidspaces/fix_kernel_panic_in_xt_qtaguid.cocci <<'COCCI1_EOF'
         @remove_dev_stats@
@@ -221,7 +220,7 @@ DS_CONFIG_EOF
         static int iface_stat_fmt_proc_show(struct seq_file *m, void *v)
         {
             ...
-        -	struct rtnl_link_stats64 dev_stats;
+        -    struct rtnl_link_stats64 dev_stats;
             ...
         }
 
@@ -230,16 +229,16 @@ DS_CONFIG_EOF
         static int iface_stat_fmt_proc_show(struct seq_file *m, void *v)
         {
             ...
-        -	if (iface_entry->active) {
-        -		stats = dev_get_stats(iface_entry->net_dev,
-        -				      &dev_stats);
-        -	} else {
-        -		stats = &no_dev_stats;
-        -	}
-        +	stats = &no_dev_stats;
+        -    if (iface_entry->active) {
+        -        stats = dev_get_stats(iface_entry->net_dev,
+        -                      &dev_stats);
+        -    } else {
+        -        stats = &no_dev_stats;
+        -    }
+        +    stats = &no_dev_stats;
             ...
         }
-COCCI1_EOF
+        COCCI1_EOF
 
         cat > Patches/Droidspaces/fix_restore_cgroup_file_prefix_handling.cocci <<'COCCI2_EOF'
         @@
@@ -249,16 +248,16 @@ COCCI1_EOF
         ...
             if (cft->file_offset) {
                 ...
-        		spin_unlock_irq(&cgroup_file_kn_lock);
+                spin_unlock_irq(&cgroup_file_kn_lock);
             }
 
-        +	if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) && !(cft->flags & CFTYPE_NO_PREFIX)) {
-        +		snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
-        +		kernfs_create_link(cgrp->kn, name, kn);
-        +	}
+        +    if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) && !(cft->flags & CFTYPE_NO_PREFIX)) {
+        +        snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
+        +        kernfs_create_link(cgrp->kn, name, kn);
+        +    }
             return 0;
         }
-COCCI2_EOF
+        COCCI2_EOF
 
         DEFCONFIG="arch/arm64/configs/${{ github.event.inputs.device }}_defconfig"
         echo "[*] Appending droidspaces config to $DEFCONFIG"
