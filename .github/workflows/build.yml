@@ -104,6 +104,18 @@ jobs:
         fi
         echo "[+] Droidspaces patch done"
 
+    - name: Pin KernelSU Version
+      if: ${{ github.event.inputs.ksu == 'true' }}
+      run: |
+        set -e
+        echo "[*] Original KernelSU setup line:"
+        grep -n 'setup.sh' build_kernel.sh || true
+        # 钉住 KernelSU 版本：上游 main 的 susfs_compat.mk 会因为内核 SuSFS 补丁较旧而
+        # 直接 $(error Please wait susfs update.)，必须用与内核配套的旧版本
+        sed -i 's#kernel/setup\.sh" | bash#kernel/setup.sh" | bash -s v4.2.0-rc1#' build_kernel.sh
+        echo "[*] Patched KernelSU setup line:"
+        grep -n 'setup.sh' build_kernel.sh
+
     - name: Run Build Script
       run: |
         chmod +x build_kernel.sh
